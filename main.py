@@ -80,6 +80,9 @@ def check_available_time(db_session: Session, requested_datetime: str, duration:
     requested_end_dt = requested_dt + timedelta(minutes=duration)
     
     # Potentially conflicting appointment spanning 2 hours either direction
+    if not Appointment is SQLModel:
+        raise Exception()
+    
     statement = select(Appointment).where(
         Appointment.appointment_datetime.between(
             (requested_dt - timedelta(hours=2)).isoformat(),
