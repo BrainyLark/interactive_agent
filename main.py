@@ -1,6 +1,7 @@
 from typing import Annotated, Sequence, Optional, Tuple, Literal, TypedDict
 from fastapi import FastAPI, Depends, HTTPException, Query
-from sqlmodel import SQLModel, Field, Session, select, create_engine, DateTime
+from sqlmodel import SQLModel, Field, Session, select, create_engine
+from sqlmodel.main import SQLModelMetaclass
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from dateutil import parser

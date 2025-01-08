@@ -16,8 +16,7 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 
-from main import Appointment
-logging.basicConfig(filename="appointment_app_run_001.log", level=logging.INFO)
+logging.basicConfig(filename="appointment_app_run_002.log", level=logging.INFO)
 logger = logging.getLogger("__main__")
 
 _ = load_dotenv()
@@ -41,6 +40,8 @@ def set_appointment(appointment_time: str, branch: int, name: str, expected_dura
     appointment = { "id": None, "name": name, "operation": None, "created_date": datetime.now().strftime("%d/%m/%Y, %H:%M:%S"),
                    "expected_duration": expected_duration, "appointment_datetime": appointment_time, "branch": branch}
     
+    print(f"Таны захиалгыг бүртгэлээ. {appointment_time}-д манай {branch}-р салбар дээр уулзацгаая.")
+    
     response = requests.post("http://localhost:8000/appointment", json=appointment)
     response_parsed = response.json()
     return response_parsed
@@ -57,6 +58,8 @@ def check_conflicting_appointment(dt: str, duration: int) -> str:
     Returns:
         str: tells if the requested datetime slot is free to make an appointment, otherwise, it will suggest another time when it is free.
     """
+    
+    print(f"Та түр хүлээгээрэй. {dt}-ийн үед үсчин маань сул эсэхийг шалгаж байна...")
     response = requests.get(f"http://localhost:8000/check_conflict?dt={dt}&duration={duration}")
     response_parsed = response.json()
     return response_parsed["message"]
@@ -74,13 +77,20 @@ def ask_user_for_input(user_prompt: str) -> str:
     user_response = input(user_prompt + ":\n\n")
     return user_response
 
+@tool
+def get_current_datetime() -> str:
+    """Use this function to get the current timestamp in ISO format.
+    Returns: the current datetime in ISO format
+    """
+    return datetime.now().isoformat()
+
 api_key = os.getenv("OPENAI_API_KEY", "")
-tools = [ask_user_for_input, set_appointment, check_conflicting_appointment]
+tools = [get_current_datetime, ask_user_for_input, set_appointment, check_conflicting_appointment]
 tool_node = ToolNode(tools)
 
-model = ChatOpenAI(model="gpt-4o-mini", api_key=convert_to_secret_str(api_key)).bind_tools(tools)
+model = ChatOpenAI(model="gpt-4o", api_key=convert_to_secret_str(api_key)).bind_tools(tools)
 
-def should_continue(state: MessagesState) -> Literal["tools", END]:
+def should_continue(state: MessagesState) -> str:
     messages = state['messages']
     last_message = messages[-1]
     if isinstance(last_message, AIMessage) and last_message.tool_calls:
@@ -88,15 +98,19 @@ def should_continue(state: MessagesState) -> Literal["tools", END]:
     return END
 
 system_prompt = """
-    You are a barbershop AI agent that makes haircut appointments for users. You MUST use the following tools to assist users:
-    - ask_user_for_input: Use this to get necessary information from the user
+    You are a barbershop AI agent that makes haircut appointments for users. And you must communicate in
+    Mongolian language. You MUST use the following tools to assist users:
+    - get_current_datetime: People don't express the reservation datetime in full format, so you have to use this tool to guess the unambiguous datetime.
+    - ask_user_for_input: Use this to get necessary information from the user (you must let the user confirm the suggested time and ask again)
     - check_conflicting_appointment: Use this to verify if the requested time slot is available
     - set_appointment: Use this to create the final appointment
 
     For each appointment, you need to:
     1. Gather necessary information using ask_user_for_input (name, preferred date and time)
-    2. Check if the time slot is available using check_conflicting_appointment (duration is 45 minutes)
-    3. Create the appointment using set_appointment
+    2. Use `get_current_datetime` for the present datetime and suppose the accurate datetime from the user's input. You have to have it confirmed by the user again.
+    3. Check if the time slot is available using check_conflicting_appointment (duration is 45 minutes)
+    4. Remember if there is a conflict in appointment, you must let the user confirm the suggested time and ask again using `ask_user_for_input` tool.
+    5. Create the appointment using set_appointment
 
     Always use these tools to complete the task. Do not provide fictional responses.
 """
@@ -120,6 +134,6 @@ checkpointer = MemorySaver()
 app = workflow.compile(checkpointer=checkpointer)
 
 entry_message = [SystemMessage(content=system_prompt)]
-context = app.invoke({"messages": entry_message}, config={"configurable": {"thread_id": 1201}})
+context = app.invoke({"messages": entry_message}, config={"configurable": {"thread_id": 1004}})
 
 logger.info(context)
