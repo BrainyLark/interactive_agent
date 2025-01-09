@@ -95,13 +95,20 @@ def set_appointment(appointment_time: str, branch: int, name: str, expected_dura
         str: string representation of whether the insertion was successful.
     """
     
-    appointment = { "id": None, "name": name, "operation": None, "created_date": datetime.now().strftime("%d/%m/%Y, %H:%M:%S"),
-                   "expected_duration": expected_duration, "appointment_datetime": appointment_time, "branch": branch}
-    
-    print(f"Таны захиалгыг бүртгэлээ. {appointment_time}-д манай {branch}-р салбар дээр уулзацгаая.")
+    appointment = { "id": None, 
+                   "name": name, 
+                   "operation": None, 
+                   "branch": branch,
+                   "expected_duration": expected_duration, 
+                   "created_date": datetime.now().isoformat(),
+                   "appointment_datetime": appointment_time
+                }
     
     response = requests.post("http://localhost:8000/appointment", json=appointment)
     response_parsed = response.json()
+    
+    print(f"Таны захиалгыг бүртгэлээ. {response_parsed}")
+    
     return response_parsed
     
 
@@ -143,6 +150,12 @@ def get_current_datetime() -> str:
     return datetime.now().isoformat()
 
 
+@tool(return_direct=True)
+def connect_to_human_operator() -> str:
+    """Use this when you are inquired of the business information you lack."""
+    return "FINAL STATE: Сайн байна уу? Та манай кассын ажилтантай холбогдлоо. Танд юугаар туслах вэ?"
+
+
 def main():
     _ = load_dotenv()
     logging.basicConfig(filename="agent_control.log", level=logging.INFO)
@@ -150,7 +163,7 @@ def main():
     
     OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
     
-    tools = [get_current_datetime, ask_user_for_input, check_conflicting_appointment, set_appointment]
+    tools = [get_current_datetime, ask_user_for_input, check_conflicting_appointment, set_appointment, connect_to_human_operator]
     model = ChatOpenAI(model="gpt-4o-mini", api_key=convert_to_secret_str(OPENAI_KEY))
     
     prompt = """
@@ -183,15 +196,23 @@ def main():
         4. Check for conflicts
         5. Confirm with customer
         6. Set the appointment
-        7. Send FINAL STATE: in the AIMessage content with the conclusive message.
+        7. Ask the user if they have any question
+        8. Send FINAL STATE: in the AIMessage content with the conclusive message
 
         Always maintain this Thought/Action/Observation pattern for EVERY step.
         Communicate with users in Mongolian but keep your Thought/Action/Observation in English.
-
-        Never make up responses - use the provided tools for all interactions.
+        
+        ADDITIONAL REMINDERS:
+        - User can inquire of the barbershop business information such as working hours, locations and specific barbers.
+        - If user provides a response unrelated to the barbershop information or appointments, remind them to stay in lane,
+        and if they do not comply, gently cut the contact sliding `FINAL STATE:` in the AIMessage content.
+        - If you lack information to answer the business question, connect them to the human operator through `connect_to_human_operator`
+        tool and shut off the conversation with `FINAL STATE:` in the AIMessage content.
+        - Never make up responses 
+        - Use the provided tools for all interactions.
     """
     
-    bot = Agent(model, tools, prompt)
+    bot = Agent(model=model, tools=tools, system=prompt)
     
     text_query = input("AI assistant: Сайн байна уу? Та манай үсчинтэй холбогдлоо. Танд яаж туслах вэ?\n\n> Та: ")
     messages = [HumanMessage(content=text_query)]
