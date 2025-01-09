@@ -1,8 +1,8 @@
 import logging
 import requests
-from typing import Literal
+from typing import Literal, List
 
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import SystemMessage, AIMessage
 
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -16,7 +16,7 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 
-logging.basicConfig(filename="appointment_app_run_002.log", level=logging.INFO)
+logging.basicConfig(filename="appointment_app_run_003.log", level=logging.INFO)
 logger = logging.getLogger("__main__")
 
 _ = load_dotenv()
@@ -74,12 +74,12 @@ def ask_user_for_input(user_prompt: str) -> str:
     Returns:
         str: the answer typed by the user
     """
-    user_response = input(user_prompt + ":\n\n")
+    user_response = input("\nAI Assistant: " + user_prompt + ":\n> User: ")
     return user_response
 
 @tool
 def get_current_datetime() -> str:
-    """Use this function to get the current timestamp in ISO format.
+    """Use this function to get the current timestamp in ISO format. This tool will help you have the sense of present date and time.
     Returns: the current datetime in ISO format
     """
     return datetime.now().isoformat()
@@ -87,8 +87,9 @@ def get_current_datetime() -> str:
 api_key = os.getenv("OPENAI_API_KEY", "")
 tools = [get_current_datetime, ask_user_for_input, set_appointment, check_conflicting_appointment]
 tool_node = ToolNode(tools)
+        
 
-model = ChatOpenAI(model="gpt-4o", api_key=convert_to_secret_str(api_key)).bind_tools(tools)
+model = ChatOpenAI(model="gpt-4o-mini", api_key=convert_to_secret_str(api_key)).bind_tools(tools)
 
 def should_continue(state: MessagesState) -> str:
     messages = state['messages']
@@ -98,21 +99,31 @@ def should_continue(state: MessagesState) -> str:
     return END
 
 system_prompt = """
-    You are a barbershop AI agent that makes haircut appointments for users. And you must communicate in
-    Mongolian language. You MUST use the following tools to assist users:
-    - get_current_datetime: People don't express the reservation datetime in full format, so you have to use this tool to guess the unambiguous datetime.
-    - ask_user_for_input: Use this to get necessary information from the user (you must let the user confirm the suggested time and ask again)
-    - check_conflicting_appointment: Use this to verify if the requested time slot is available
-    - set_appointment: Use this to create the final appointment
+    You are a barbershop AI agent that communicates in Mongolian language. You MUST follow this EXACT format for every interaction:
 
-    For each appointment, you need to:
-    1. Gather necessary information using ask_user_for_input (name, preferred date and time)
-    2. Use `get_current_datetime` for the present datetime and suppose the accurate datetime from the user's input. You have to have it confirmed by the user again.
-    3. Check if the time slot is available using check_conflicting_appointment (duration is 45 minutes)
-    4. Remember if there is a conflict in appointment, you must let the user confirm the suggested time and ask again using `ask_user_for_input` tool.
-    5. Create the appointment using set_appointment
+    Thought: First, explain your reasoning in English about what you need to do and why.
+    Action: Then, specify which tool you'll use and with what parameters.
+    Observation: Wait for the tool response.
 
-    Always use these tools to complete the task. Do not provide fictional responses.
+    For example:
+
+    Thought: I need to start by getting the customer's preferred appointment time to check availability.
+    Action: I will use ask_user_for_input to ask when they want to schedule their appointment.
+    [Tool execution happens]
+    Observation: [System will provide the observation]
+
+    For each appointment, you must:
+    1. Get preferred date and time
+    2. Get customer's name
+    3. Check current datetime
+    4. Check for conflicts
+    5. Confirm with customer
+    6. Set the appointment
+
+    Always maintain this Thought/Action/Observation pattern for EVERY step.
+    Communicate with users in Mongolian but keep your Thought/Action/Observation in English.
+
+    Never make up responses - use the provided tools for all interactions.
 """
 
 def call_model(state: MessagesState):
@@ -134,6 +145,6 @@ checkpointer = MemorySaver()
 app = workflow.compile(checkpointer=checkpointer)
 
 entry_message = [SystemMessage(content=system_prompt)]
-context = app.invoke({"messages": entry_message}, config={"configurable": {"thread_id": 1004}})
+context = app.invoke({"messages": entry_message}, config={"configurable": {"thread_id": 124563}})
 
 logger.info(context)
