@@ -66,7 +66,7 @@ def check_datetime(db_session: Session, requested_datetime: str, duration: int) 
     
     check_time_window = 2
     
-    requested_dt = parser.parse(requested_datetime)
+    requested_dt = parser.parse(requested_datetime).astimezone()
     requested_end_dt = requested_dt + timedelta(minutes=duration)
     
     # Potentially conflicting appointment spanning 2 hours either direction
@@ -81,7 +81,7 @@ def check_datetime(db_session: Session, requested_datetime: str, duration: int) 
     
     # Check if there is an overlapping appointment
     for appointment in appointments:
-        appointment_dt = parser.parse(appointment.appointment_datetime)
+        appointment_dt = parser.parse(appointment.appointment_datetime).astimezone()
         appointment_end_dt = appointment_dt + timedelta(minutes=appointment.expected_duration)
         
         if ((requested_dt <= appointment_end_dt and requested_end_dt >= appointment_dt) 

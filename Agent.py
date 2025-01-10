@@ -40,41 +40,39 @@ class Agent:
         messages = state['messages']
         if self.system:
             messages = [SystemMessage(content=self.system)] + messages
+            
         messages = self.model.invoke(messages)
         return { "messages" : [messages] }
     
     def next_move(self, state: AgentState) -> Literal[Decision.THINK, Decision.ACT, Decision.END]:
         llm_message = state["messages"][-1]
         if type(llm_message) is AIMessage:
-            if len(llm_message.content) > 0:
-                print(f"{llm_message.content}")
+            if len(llm_message.content) > 0 and len(llm_message.tool_calls) == 0:
                 if (type(llm_message.content) is str) and ("final state:" in llm_message.content.lower()):
                      return Decision.END
-                print(f"NEXT MOVE: Sending LLM signal to decide actions...\n")        
+                print(f"{llm_message.content}")
                 return Decision.THINK
-            elif len(llm_message.tool_calls) > 0:
-                print(f"NEXT MOVE:  LLM chose an action and about to execute...")
+            elif len(llm_message.tool_calls) > 0 and len(llm_message.content) == 0:
+                print(f"ACTION: {llm_message.tool_calls[0]['name']}({llm_message.tool_calls[0]['args']})")
+                return Decision.ACT
+            elif len(llm_message.tool_calls) > 0 and len(llm_message.content) > 0:
+                print("CONTENT and TOOL_CALLS both satisfied!")
+                print(f"ACTION: {llm_message.tool_calls[0]['name']}({llm_message.tool_calls[0]['args']})")
                 return Decision.ACT
                 
         return Decision.END
     
     def act(self, state: AgentState) -> dict | None:
         llm_message = state['messages'][-1]
-        
         if not type(llm_message) is AIMessage:
             return
-        
         results = []
         for t in llm_message.tool_calls:
             if not t['name'] in self.tools:
-                print(f"...bad tool name...\nrequires a retry...")
                 result = "bad tool name, retry"
             else:
-                print(f"ACT: call function={t['name']} with args={t['args']}")
                 result = self.tools[t['name']].invoke(t['args'])
-                print(f"OBSERVATION: {str(result)}")
             results.append(ToolMessage(tool_call_id=t['id'], name=t['name'], content=str(result)))
-            print("COMPLETED ACTION: Sending control to LLM...")
             
         return { "messages" : results }
     
@@ -150,10 +148,28 @@ def get_current_datetime() -> str:
     return datetime.now().isoformat()
 
 
-@tool(return_direct=True)
+@tool
 def connect_to_human_operator() -> str:
     """Use this when you are inquired of the business information you lack."""
     return "FINAL STATE: Сайн байна уу? Та манай кассын ажилтантай холбогдлоо. Танд юугаар туслах вэ?"
+
+@tool
+def browse_business_information(question: str) -> str:
+    """Use this tool to reply to the question asked by the user
+
+    Args:
+        question (str): question regarding the business operations of our barbershop
+
+    Returns:
+        str: response to the question if it is found in our documents; otherwise, it says it was not found
+    """
+    
+    if "хуваарь" in question.lower():
+        return f"Өглөө 8:00 цагаас оройны 17 цаг хүртэл ажиллана."
+    elif "хаяг" in question.lower():
+        return f"Манайд ганцхан салбар байгаа, Сүхбаатар дүүрэг Сити Тауэрийн 4 давхарт Чимэгэ салон heh."
+    
+    return "Response to the question was not found. Connect that person to a human operator, and finish."
 
 
 def main():
@@ -163,51 +179,71 @@ def main():
     
     OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
     
-    tools = [get_current_datetime, ask_user_for_input, check_conflicting_appointment, set_appointment, connect_to_human_operator]
+    tools = [
+        get_current_datetime, 
+        ask_user_for_input, 
+        check_conflicting_appointment, 
+        set_appointment, 
+        connect_to_human_operator, 
+        browse_business_information
+    ]
+    
     model = ChatOpenAI(model="gpt-4o-mini", api_key=convert_to_secret_str(OPENAI_KEY))
     
     prompt = """
-        You are a barbershop AI agent that communicates in Mongolian language. You MUST follow this EXACT format for every interaction:
-
-        Thought: First, explain your reasoning in English about what you need to do and why.
-        Action: Then, specify which tool you'll use and with what parameters.
-        Observation: This is the message you receive from the tool invocation or Action
+        You are a barbershop AI agent that communicates in Mongolian language and reason in English.
         
-        Thought has to be in `content` property of the AIMessage object, which is the output from the LLM.
-        Action has to be specified in `tool_calls` property of the AIMessage object, which is the output from the LLM.
-        REMEMBER, you HAVE TO explicitly state `FINAL STATE:` in the beginning of AIMessage `content` property
-        when the appointment process is completed or you deem it is unnecessary to continue the interaction.
+        Your PURPOSE: Help user get appointment at salon using the tools at your disposal.
         
-        For example:
-
-        Thought: I need to start by getting the customer's preferred appointment time to check availability.
-        (This thought has to be found in the following manner AIMessage(content="I need to start by getting..."))
-        Action: I will use ask_user_for_input to ask when they want to schedule their appointment.
-        (This action decision has to be found in the following manner AIMessage(tool_calls=[ToolCall(...)]))
-        [Tool execution happens]
-        Observation: Tool responded with 'Next sunday at 7 oclock in the morning'
-        ... etc ...
-        FINAL STATE: Customer appointment set successfully, we can end the process here.
-
-        For each appointment, you must:
+        In your interaction, you MUST follow the mechanism underneath:
+        
+        1. THOUGHT: you must formulate what action to take and why with respect to your purpose.
+        2. THOUGHT: you must specify the function among the bound tools and its arguments to realize that action.
+        3. OBSERVATION: you must receive the tool message in response to your function call and update
+        your current THOUGHT to identify your current situation and devise the next action.
+        4. IMPORTANT to note that you are an LLM node in a LangGraph graph. Your output is strictly required to
+        be formatted as an AIMessage object from langchain_core.messages package. To that end, your natural language
+        THOUGHT about what to do and why has to be in the `content` property, whilst your specification of
+        the functions and the arguments has to populate `tool_calls` property of the AIMessage object returned from your node.
+        
+        Once appointment process is done, put `FINAL STATE:` string in the AIMessage `content` property with the conclusive message
+        to finish the conversation.
+        
+        Examples:
+        * The following AIMessage object is structured in your node as a reply to the user who wanted an appointment.
+        
+        THOUGHT: I need to start by getting the customer's preferred appointment time to check availability.
+        
+        tool_calls=[
+            {
+                'name': 'ask_user_for_input', 
+                'args': {
+                    'user_prompt': 'Та хэзээ хэдний өдрийн хэдэн цагт үсээ засуулмаар байна?'
+                }, 
+                'id': 'call_sRSZzRfjYm3cqbRnAOZ3TDAV', 
+                'type': 'tool_call'
+            }
+        ]
+        
+        * The LangGraph node associated with ACTION invokes ask_user_for_input tool and returns the ensuing ToolMessage object
+        which corresponds directly to your OBSERVATION, responsible for updating your next THOUGHT:
+        
+        ToolMessage(content='Маргааш өглөө 10 цагт засуулах боломжтой юу?', name='ask_user_for_input', tool_call_id='call_sRSZzRfjYm3cqbRnAOZ3TDAV')
+        
+        For each appointment, the typical :
         1. Get preferred date and time
         2. Get customer's name
         3. Check current datetime
         4. Check for conflicts
         5. Confirm with customer
         6. Set the appointment
-        7. Ask the user if they have any question
-        8. Send FINAL STATE: in the AIMessage content with the conclusive message
+        7. Return `FINAL STATE:` with the conclusive message
 
-        Always maintain this Thought/Action/Observation pattern for EVERY step.
-        Communicate with users in Mongolian but keep your Thought/Action/Observation in English.
+        Always maintain this THOUGHT/ACTION/OBSERVATION pattern for EVERY step.
+        Communicate with users in Mongolian but keep your THOUGHT/ACTION/OBSERVATION in English.
         
-        ADDITIONAL REMINDERS:
-        - User can inquire of the barbershop business information such as working hours, locations and specific barbers.
-        - If user provides a response unrelated to the barbershop information or appointments, remind them to stay in lane,
-        and if they do not comply, gently cut the contact sliding `FINAL STATE:` in the AIMessage content.
-        - If you lack information to answer the business question, connect them to the human operator through `connect_to_human_operator`
-        tool and shut off the conversation with `FINAL STATE:` in the AIMessage content.
+        ADDITIONAL REMINDER:
+        - Once appointment is set, finish the conversation by including `FINAL STATE:` substring.
         - Never make up responses 
         - Use the provided tools for all interactions.
     """
